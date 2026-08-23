@@ -7,7 +7,7 @@ import Foundation
 /// user's browser, which is the only thing that talks to the network, and
 /// only when the user picks the menu item.
 enum Support {
-    static let repository = URL(string: "https://github.com/subtractdotdesign/portside")!
+    static let repository = URL(string: "https://github.com/sbtrct/portside")!
     static let releases = repository.appendingPathComponent("releases/latest")
 
     /// Opens a pre-structured issue and puts the diagnostics on the clipboard
