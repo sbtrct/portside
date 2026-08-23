@@ -5,6 +5,11 @@ localhost, stop it, restart it, open it in the browser.
 
 Native SwiftUI (`MenuBarExtra`), no dependencies, one binary.
 
+Made by [Thomas Drach](https://github.com/tdrach) at
+[Subtract](https://subtract.design). Builds are signed with Thomas's
+Apple Developer ID, so macOS will show his name — same person, same
+project.
+
 ## What it does
 
 One list. Every server Portside has ever seen, each row start/stop-able.
