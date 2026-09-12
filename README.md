@@ -61,12 +61,17 @@ Native SwiftUI, no dependencies, a single ~1.5MB binary.
 
 ### Safety guarantees
 
+- **Zero network calls.** Portside never opens a socket — not for updates,
+  not for analytics. Check it yourself while it's running:
+  `lsof -a -i -p $(pgrep -x Portside)` prints nothing. (The `-a` matters:
+  without it lsof ORs the filters and lists every connection on the Mac.)
+  The only network activity is your browser, when you click a link.
 - Portside writes **only** inside `~/Library/Application Support/Portside/`
   (servers.json, tombstones.json, logs). It never writes into a repo; project
   files (package.json etc.) are read-only probes — non-blocking, symlink-
   refusing, size-capped, so a planted FIFO or link can't hang or redirect it.
-- Log files are 0600, opened `O_NOFOLLOW`, rotated at 5 MB (one `.old`
-  generation), and deleted when their server is removed.
+- Log files are 0600, opened `O_NOFOLLOW`, rotated when a server starts if over 5 MB (one
+  `.old` generation), and deleted when their server is removed.
 - **Remove sticks**: removed recipes are tombstoned, so supervised servers
   (nodemon, launchd KeepAlive) that respawn under new pids don't resurrect
   rows. Adding the same directory + command back via Add server clears the
@@ -88,8 +93,19 @@ Native SwiftUI, no dependencies, a single ~1.5MB binary.
   in `~/.zshrc`. Homebrew and version-manager bins are appended as a fallback.
 - Detected-server filtering: ephemeral ports (≥ 49152) and known app daemons
   (Figma, Raycast, Adobe, Cursor/Code helpers, rapportd, …) are hidden — edit
-  `PortScanner.denylist` to taste. Saved servers bypass both filters, so a
-  high-port server you saved still tracks correctly.
+  `PortScanner.denylist` to taste. Saved servers bypass the port floor (by port, and by directory), so a
+  high-port server you saved still tracks correctly; the daemon denylist is
+  unconditional by design.
+- **Known app plumbing is hidden**: test bundles, Apple's session daemons,
+  and a short list of helper bundles (Warp's agent, Slack, Discord, Zoom,
+  Teams, Notion, 1Password — `PortScanner.helperBundles`). Deliberately NOT a
+  blanket "anything under a .app" rule: every framework-build Python reports
+  its executable as `…/Python.app/…`, .pkg JDKs live in `/Library/Java`, and
+  Docker Desktop, OrbStack and Postgres.app are apps whose whole point is the
+  ports they hold. All of those stay visible. Servers Portside started are
+  never filtered.
+- A server whose working directory is `$HOME` is named after its process, not
+  after your home folder.
 - Auto-adoption skips app internals and tool state: system paths, `~/Library`,
   `$HOME` itself, hidden directories, `node_modules`, `.app` bundles, temp
   dirs. Those show while running and vanish when stopped.
@@ -98,7 +114,7 @@ Native SwiftUI, no dependencies, a single ~1.5MB binary.
 
 ### Tests
 
-`swift test` includes 125 tests covering the lsof/NUL parser (including field-forgery
+`swift test` includes 134 tests covering the lsof/NUL parser (including field-forgery
 attempts), KERN_PROCARGS2 parsing, shell-quoting round-trips through a real
 zsh, claiming precedence, adoption boundaries, store durability (corruption,
 migration, symlink quarantine, permissions), launcher process-group semantics

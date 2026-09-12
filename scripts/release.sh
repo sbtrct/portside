@@ -40,8 +40,12 @@ if [[ "$SIGNATURE" != *"TeamIdentifier="* || "$SIGNATURE" == *"TeamIdentifier=no
 	exit 1
 fi
 
+# Same team pin as build-app.sh: the disk image must be signed by the
+# identity that signed the app inside it, not whichever cert is listed first.
+TEAM_ID="6GG3WY94W2"
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
-	| sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | sed -n '1p')
+	| sed -n "s/.*\"\(Developer ID Application:.*(${TEAM_ID})\)\".*/\1/p" | sed -n '1p')
+[[ -n "$IDENTITY" ]] || { echo "ERROR: no Developer ID for team ${TEAM_ID}"; exit 1; }
 
 # On rejection, notarytool exits non-zero with no reason — fetch the log,
 # which names the exact offending binary and cause.

@@ -8,9 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION=$(sed -n 's/.*current = "\(.*\)".*/\1/p' Sources/Portside/Version.swift)
-# Monotonic across releases so macOS can always tell builds apart, even when
-# the marketing version is unchanged.
-BUILD_NUMBER=$(git rev-list --count HEAD 2>/dev/null || echo 1)
+# Monotonic so macOS can always tell builds apart, even when the marketing
+# version is unchanged. Wall-clock rather than a commit count: a count goes
+# backwards across a history squash and collides for dirty-tree builds.
+BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
 
 # Universal binary so the same .app works on Intel and Apple Silicon.
 swift build -c release --arch arm64 --arch x86_64
