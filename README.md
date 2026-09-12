@@ -1,81 +1,51 @@
 # Portside
 
-A macOS menu bar app for local dev servers: see everything listening on
-localhost, stop it, restart it, open it in the browser.
+Manage your local servers in the menu bar. 
 
-Native SwiftUI (`MenuBarExtra`), no dependencies, one binary.
+Portside is a free macOS menu bar app for managing local dev servers. See everything listening on localhost: stop it, start it, open it in the browser, and more. 
 
-Made by [Thomas Drach](https://github.com/tdrach) at
-[Subtract](https://subtract.design). Builds are signed with Thomas's
-Apple Developer ID, so macOS will show his name — same person, same
-project.
+Everything stays on your machine. Portside makes zero external calls. No server calls, no tracking.
 
-## What it does
+## Quickstart 
+### Install
 
-One list. Every server Portside has ever seen, each row start/stop-able.
-
-- **Detects** every listening TCP server via `lsof`, with the process's working
-  directory resolved — so `node :5173` shows up as *flatland*, not a mystery pid.
-- **Auto-saves** anything new it detects (with a usable working directory):
-  name from the folder, command guessed from `package.json`
-  (`npm`/`pnpm`/`yarn`/`bun`, `dev`/`start`/`serve` scripts — falls back to the
-  process's actual command line), port from detection. Once seen, restarting it
-  is one click forever.
-- Per row: start (`play`), stop (`stop`), open `http://localhost:PORT`
-  (`globe` or click the row), and ⋯ for Edit / View log / Reveal / Copy URL /
-  Start-or-Stop server / Remove. Removing a running server also stops it, so
-  the row doesn't instantly re-adopt.
-- Servers with no working directory to restart from (Docker-style daemons) show
-  while running and disappear when stopped — there's no recipe to save.
-- **Logs**: every managed server's output goes to
-  `~/Library/Application Support/Portside/logs/<name>.log` (row menu → View Log).
-- Menu bar icon shows a count of live servers.
-- **Memory** per row: the resident footprint of the server's whole process
-  tree, amber past 2 GB and red past 6 GB — long-lived `next dev` servers
-  leak, and the row tells you when a restart is due.
-
-## Install
+### Use homebrew (recommended) 
 
 ```sh
 brew install --cask sbtrct/tap/portside
 ```
 
-Or download the latest `.dmg` from
+### Or download the `.dmg` 
+Download the latest `.dmg` from
 [Releases](https://github.com/sbtrct/portside/releases), drag Portside to
-Applications, launch it. Signed with a Developer ID and notarized by Apple, so it opens
-without Gatekeeper warnings — and the notarization ticket is stapled to
-both the app and the disk image, so it validates offline.
+Applications, launch it. 
 
-Move it to /Applications rather than running it from the disk image:
-Gatekeeper's app translocation can otherwise break launch-at-login.
+> Remember to move it to /Applications rather than running it from the disk image: Gatekeeper's app translocation can otherwise break launch-at-login.
 
-**Updating:** `brew upgrade --cask portside`, or use ⋯ → Check for
-updates in the app, which opens the latest release.
+## Impetus 
+I've been having lots of fun making software for myself, and small little apps for others, especially with the addition of our new agent friends. 
 
-**Upgrading from a build you compiled yourself before 0.2.0?** Those were
-ad-hoc signed, and macOS keys some state to code-signing identity. Your
-saved servers, projects, and logs carry over untouched, but you may be
-re-prompted for folder access on the first scan, and if you had
-launch-at-login enabled you should toggle it off and on once so macOS
-re-registers the login item under the new identity.
+One challenge I've had is managing where different apps are running on localhost. Claude starts one dev server, OpenClaw starts a different app, then Codex spins up a worktree. Things get more complicated where I might have a separate servers to run for backend and frontend. 
 
-## Build from source
+## Features
+### Auto-completion of your local servers, and memory
+You shouldn't have to manually add local servers, Portside will listen and find them. 
+You can always add manually if you need. Once you've started an app once, Portside remembers it in the list. You can easily find it again. If you have more of an ephemeral server, you can remove it from the list. 
+### Starting, stopping, and restarting
+You can easily start and stop servers, or restart them after they're running. 
+### Opening the server
+By default, clicking on the name of the server opens it in your default browser. Next to the name, Portside also shows the localhost port that it's running on. 
+### Grouping with Projects 
+If you have multiple servers that are a part of one project, like a separate backend and front end, you can create a "Project" for these servers so you can start and stop them in a single click. 
+### Metrics and more
+On hover, you can see how much memory each server is running. You may want to double check and restart a long running server to preserve the memory of your machine. 
+In the overflow menu, you can open logs to that server, as well as revealing the directory in Finder, and more. 
 
-```sh
-make install   # builds dist/Portside.app, copies to /Applications, opens it
-```
 
-Other targets: `make app` (build the bundle), `make dmg` (unsigned disk
-image), `make release` (signed + notarized + stapled DMG — needs a Developer
-ID and `make notarize-setup`), `make run` (dev run from terminal), `make
-scan` (headless one-shot scan, prints the table), `make clean`.
+## Tech Specs
+Native SwiftUI, no dependencies, a single ~1.5MB binary.
 
-Without a Developer ID certificate in your keychain, builds are ad-hoc
-signed — fine locally, not distributable.
-
-Servers are stored in `~/Library/Application Support/Portside/servers.json`.
-
-## How stopping works
+### How stopping works
 
 - Servers Portside started live in their **own process group**, so Stop kills
   the whole tree (npm → node → esbuild workers): SIGTERM, then SIGKILL after 3s
@@ -89,7 +59,7 @@ Servers are stored in `~/Library/Application Support/Portside/servers.json`.
   Another project squatting a saved server's port is never killed through
   that row — it surfaces as its own row instead.
 
-## Safety guarantees
+### Safety guarantees
 
 - Portside writes **only** inside `~/Library/Application Support/Portside/`
   (servers.json, tombstones.json, logs). It never writes into a repo; project
@@ -110,7 +80,7 @@ Servers are stored in `~/Library/Application Support/Portside/servers.json`.
   executable — proctitle-rewritten junk (puma, pm2) becomes an ephemeral row
   instead of a broken saved entry.
 
-## Notes & caveats
+### Notes & caveats
 
 - Commands execute via `/bin/zsh -c` for stable syntax, but the
   **environment** is captured once at startup from your login shell run
@@ -126,9 +96,9 @@ Servers are stored in `~/Library/Application Support/Portside/servers.json`.
 - "Launch at Login" only works when running from the `.app` bundle
   (`make install`), not `swift run`.
 
-## Tests
+### Tests
 
-`swift test` — 125 tests covering the lsof/NUL parser (including field-forgery
+`swift test` includes 125 tests covering the lsof/NUL parser (including field-forgery
 attempts), KERN_PROCARGS2 parsing, shell-quoting round-trips through a real
 zsh, claiming precedence, adoption boundaries, store durability (corruption,
 migration, symlink quarantine, permissions), launcher process-group semantics
@@ -136,16 +106,54 @@ migration, symlink quarantine, permissions), launcher process-group semantics
 readiness probing, and a live end-to-end scan against a socket the test
 itself binds.
 
-## Projects
+### How it works
+- **Detects** every listening TCP server via `lsof`, with the process's working
+  directory resolved — so `node :5173` shows up as *your-project*, not a mystery pid.
+- **Auto-saves** anything new it detects (with a usable working directory):
+  name from the folder, command guessed from `package.json`
+  (`npm`/`pnpm`/`yarn`/`bun`, `dev`/`start`/`serve` scripts — falls back to the
+  process's actual command line), port from detection. Once seen, restarting it
+  is one click forever.
+- Per row: start (`play`), stop (`stop`), open `http://localhost:PORT`
+  (`globe` or click the row), and ⋯ for Edit / View log / Reveal / Copy URL /
+  Start-or-Stop server / Remove. Removing a running server also stops it, so
+  the row doesn't instantly re-adopt.
+- Servers with no working directory to restart from (Docker-style daemons) show
+  while running and disappear when stopped — there's no recipe to save.
+- **Logs**: every managed server's output goes to
+  `~/Library/Application Support/Portside/logs/<name>.log` (row menu → View Log).
+- Menu bar icon shows a count of live servers.
+- **Memory** per row: the resident footprint of the server's whole process
+  tree, amber past 2 GB and red past 6 GB — long-lived `next dev` servers
+  leak, and the row tells you when a restart is due.
 
-Group servers that belong together (api + frontend + worker) and run them as
-one unit. A project takes a single row: its chip aggregates member status and
-converges toward running, and clicking the row unfurls the members inline.
-Optionally start members **in order**, each one waiting until the previous
-server's port actually accepts connections.
+## More details
 
-Add a server to a project from its ⋯ menu, or from the Project field in the
-add/edit dialog. Removing a project only ungroups its servers.
+### Updating
+**Updating:** `brew upgrade --cask portside`, or use ⋯ → Check for
+updates in the app, which opens the latest release.
+
+## Build from source
+
+```sh
+make install   # builds dist/Portside.app, copies to /Applications, opens it
+```
+
+Other targets: `make app` (build the bundle), `make dmg` (unsigned disk
+image), `make release` (signed + notarized + stapled DMG — needs a Developer
+ID and `make notarize-setup`), `make run` (dev run from terminal), `make
+scan` (headless one-shot scan, prints the table), `make clean`.
+
+Without a Developer ID certificate in your keychain, builds are ad-hoc
+signed — fine locally, not distributable.
+
+Servers are stored in `~/Library/Application Support/Portside/servers.json`.
+
+## Metadata
+
+Made by [Thomas Drach](https://github.com/tdrach) at
+[Subtract](https://subtract.design). Builds are signed with Thomas's
+Apple Developer ID, so macOS will show his name. 
 
 ## Ideas for later
 
