@@ -14,6 +14,10 @@ final class AppModel: ObservableObject {
     /// Runs the user asked to stop. Their death by SIGTERM/SIGKILL is the
     /// requested outcome, so reapRuns must not record it as "exited (143)".
     private var stoppingRuns: Set<UUID> = []
+    /// External pids we've SIGTERMed, with the moment their grace runs out.
+    /// One check drains everything that is due, so stopping several servers
+    /// in quick succession produces one Force Quit dialog, not one each.
+    private var pendingStops: [pid_t: Date] = [:]
     @Published var editorDraft: ServerDraft?
     @Published var lastError: String?
 
@@ -316,14 +320,7 @@ final class AppModel: ObservableObject {
     func stop(_ server: Server) {
         lastError = nil
         reapRuns()
-        if let run = runs[server.id],
-           kill(run.pid, 0) == 0 || allServers.contains(where: { $0.pgid == run.pid }) {
-            stoppingRuns.insert(server.id)
-            Launcher.terminateGroup(run.pid)
-            escalateGroup(run.pid)
-        } else if status(of: server).isUp {
-            stopExternal(pids: claimedListeners(for: server).map(\.pid))
-        }
+        stopExternal(pids: stopManagedOrCollectExternal(server))
         refreshSoon()
     }
 
@@ -333,9 +330,32 @@ final class AppModel: ObservableObject {
         refreshSoon()
     }
 
+    /// Every external pid is collected into ONE stopExternal call so that
+    /// whatever refuses to die shows up in a single Force Quit dialog.
     func stopAll() {
-        servers.filter { status(of: $0).isUp }.forEach(stop)
-        stopExternal(pids: ghostServers.map(\.pid))
+        lastError = nil
+        reapRuns()
+        var external: [pid_t] = []
+        for server in servers where status(of: server).isUp {
+            external += stopManagedOrCollectExternal(server)
+        }
+        external += ghostServers.map(\.pid)
+        stopExternal(pids: Array(Set(external)))
+        refreshSoon()
+    }
+
+    /// A run we own is stopped here (own process group, 3s auto-escalation —
+    /// it's our dev server and we know what it is). Anything else is returned
+    /// for the caller to stop as an external process.
+    private func stopManagedOrCollectExternal(_ server: Server) -> [pid_t] {
+        if let run = runs[server.id],
+           kill(run.pid, 0) == 0 || allServers.contains(where: { $0.pgid == run.pid }) {
+            stoppingRuns.insert(server.id)
+            Launcher.terminateGroup(run.pid)
+            escalateGroup(run.pid)
+            return []
+        }
+        return status(of: server).isUp ? claimedListeners(for: server).map(\.pid) : []
     }
 
     /// Stopping a process Portside did not start: re-verify each pid still
@@ -369,17 +389,77 @@ final class AppModel: ObservableObject {
 
     /// SIGKILL external pids only after re-verifying they still hold a
     /// listening socket — guards against pid reuse during the grace window.
+    /// External processes are never force-quit automatically. A process still
+    /// listening after the grace period is telling us it's busy — a database
+    /// mid-checkpoint, a build finishing, a server draining connections — so
+    /// the decision goes to the user, the way Force Quit is a separate act
+    /// from Quit on the Mac itself. Detecting resistance rather than guessing
+    /// at "is this a database" catches exactly the cases that matter.
     private func escalatePids(_ pids: [pid_t], after grace: TimeInterval) {
         guard !pids.isEmpty else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
-            Task.detached(priority: .utility) {
-                let survivors = PortScanner.listeningPids(among: pids)
-                await MainActor.run {
-                    for pid in survivors { kill(pid, SIGKILL) }
-                    self?.refresh()
-                }
+        let deadline = Date().addingTimeInterval(grace)
+        for pid in pids { pendingStops[pid] = deadline }
+        DispatchQueue.main.asyncAfter(deadline: .now() + grace + 0.05) { [weak self] in
+            self?.checkPendingStops()
+        }
+    }
+
+    private func checkPendingStops() {
+        let now = Date()
+        let due = pendingStops.filter { $0.value <= now }.map(\.key)
+        guard !due.isEmpty else { return }
+        due.forEach { pendingStops[$0] = nil }
+        Task.detached(priority: .userInitiated) {
+            let survivors = PortScanner.listeningPids(among: due)
+            await MainActor.run {
+                self.refresh()
+                guard !survivors.isEmpty else { return }
+                self.offerForceQuit(Array(survivors).sorted())
             }
         }
+    }
+
+    private func offerForceQuit(_ survivors: [pid_t]) {
+        let names = survivors.map { pid -> String in
+            if let d = allServers.first(where: { $0.pid == pid }) {
+                return "\(d.displayName) :\(d.port)"
+            }
+            return "pid \(pid)"
+        }
+        let prompt = Self.forceQuitPrompt(names)
+
+        MenuGlassBackground.currentPanel?.close()
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = prompt.message
+        alert.informativeText = prompt.detail
+        alert.addButton(withTitle: "Keep Waiting")   // default: the safe choice
+        let force = alert.addButton(withTitle: "Force Quit")
+        force.hasDestructiveAction = true
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+
+        // Re-verify at click time: the dialog may have sat open long enough
+        // for a pid to exit and be reused by something unrelated.
+        Task.detached(priority: .userInitiated) {
+            let stillThere = PortScanner.listeningPids(among: survivors)
+            await MainActor.run {
+                for pid in stillThere { kill(pid, SIGKILL) }
+                self.refreshSoon()
+            }
+        }
+    }
+
+    /// Pure, so the wording is unit-tested.
+    nonisolated static func forceQuitPrompt(_ names: [String]) -> (message: String, detail: String) {
+        let message = names.count == 1
+            ? "\(names[0]) didn't stop"
+            : "\(names.count) servers didn't stop"
+        let list = names.map { "• \($0)" }.joined(separator: "\n")
+        let detail = list + "\n\nStill running 10 seconds after being asked to stop. "
+            + "It may be finishing work — a database writing, a build completing. "
+            + "Force Quit ends it immediately; anything unsaved is lost."
+        return (message, detail)
     }
 
     // MARK: - Projects

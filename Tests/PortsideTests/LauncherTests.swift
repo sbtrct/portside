@@ -172,3 +172,23 @@ final class LauncherTests: XCTestCase {
                           "…separate from ours, or group-kill would hit Portside")
     }
 }
+
+
+// MARK: - Force Quit prompt
+
+final class ForceQuitPromptTests: XCTestCase {
+    func testSingleSurvivorNamesIt() {
+        let p = AppModel.forceQuitPrompt(["postgres :5432"])
+        XCTAssertEqual(p.message, "postgres :5432 didn't stop")
+        XCTAssertTrue(p.detail.hasPrefix("• postgres :5432\n"))
+        XCTAssertTrue(p.detail.contains("Force Quit ends it immediately"))
+    }
+
+    func testSeveralSurvivorsAreCountedAndListed() {
+        let p = AppModel.forceQuitPrompt(["postgres :5432", "redis-server :6379", "pid 4242"])
+        XCTAssertEqual(p.message, "3 servers didn't stop")
+        for name in ["• postgres :5432", "• redis-server :6379", "• pid 4242"] {
+            XCTAssertTrue(p.detail.contains(name), name)
+        }
+    }
+}

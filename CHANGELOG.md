@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- External processes are no longer force-quit automatically. After SIGTERM
+  and a 10-second grace, anything still running is listed in one dialog —
+  Keep Waiting or Force Quit — so a database mid-write is never killed
+  without you saying so. Stop all servers produces a single dialog.
+
 ## 0.4.0 — 2026-09-12
 - A saved server running on an OS-assigned (ephemeral) port is now found and
   claimed by its row — previously it was invisible and Start failed against

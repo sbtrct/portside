@@ -51,9 +51,11 @@ Native SwiftUI, no dependencies, a single ~1.5MB binary.
   the whole tree (npm → node → esbuild workers): SIGTERM, then SIGKILL after 3s
   if anything in the group is still alive.
 - Servers Portside didn't start are re-verified as still-listening at signal
-  time (a scan snapshot can be seconds stale), then SIGTERMed, with a longer
-  10s grace before a re-verified SIGKILL — external processes may be
-  databases mid-write and get more patience than our own dev servers.
+  time (a scan snapshot can be seconds stale), then SIGTERMed and given 10s.
+  Anything still running after that is **never force-quit automatically**:
+  Portside shows one dialog naming the survivors — it may be a database
+  mid-write or a build finishing — and you choose Keep Waiting or Force
+  Quit. Stopping several servers at once produces a single dialog.
 - A row only ever signals processes it can **attribute**: a run's own process
   group, a port match corroborated by working directory, or a directory match.
   Another project squatting a saved server's port is never killed through
@@ -114,7 +116,7 @@ Native SwiftUI, no dependencies, a single ~1.5MB binary.
 
 ### Tests
 
-`swift test` includes 134 tests covering the lsof/NUL parser (including field-forgery
+`swift test` includes 136 tests covering the lsof/NUL parser (including field-forgery
 attempts), KERN_PROCARGS2 parsing, shell-quoting round-trips through a real
 zsh, claiming precedence, adoption boundaries, store durability (corruption,
 migration, symlink quarantine, permissions), launcher process-group semantics
