@@ -137,7 +137,7 @@ final class LauncherTests: XCTestCase {
         var members: [pid_t] = []
         let spawnDeadline = Date().addingTimeInterval(8)
         while Date() < spawnDeadline {
-            let out = shellData("/usr/bin/pgrep", ["-g", "\(pid)"])
+            let out = shellData("/usr/bin/pgrep", ["-g", "\(pid)"]) ?? Data()
             members = String(decoding: out, as: UTF8.self)
                 .split(separator: "\n").compactMap { pid_t($0) }
             if members.count >= 3 { break } // zsh + 2 sleeps

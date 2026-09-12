@@ -6,7 +6,14 @@ enum Main {
     static func main() {
         // Headless one-shot scan, handy for debugging: swift run Portside --scan
         if CommandLine.arguments.contains("--scan") {
-            for server in PortScanner().scan() ?? [] {
+            // Same exemptions the app applies, so the table shows what the
+            // popover would show — including saved servers on odd ports.
+            let saved = ServerStore().load()
+            let scan = PortScanner().scan(
+                exemptPorts: Set(saved.compactMap(\.port)),
+                exemptDirectories: Set(saved.map { Matching.canonicalPath($0.directory) })
+            )
+            for server in scan ?? [] {
                 let cwd = server.cwd.map { $0.abbreviatingHome } ?? "-"
                 print("\(server.port)\t\(server.processName)\tpid \(server.pid)\t\(cwd)")
             }

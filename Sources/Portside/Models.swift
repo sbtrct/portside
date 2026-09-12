@@ -65,8 +65,15 @@ struct DetectedServer: Identifiable, Equatable, Hashable {
     var id: String { "\(pid):\(port)" }
 
     /// Best human-readable identity: server folder name if we know the cwd.
+    /// Resolved once: this runs in every row's body, and realpath(3) is a
+    /// syscall chain, not a string operation.
+    private static let canonicalHome = Matching.canonicalPath(NSHomeDirectory())
+
     var displayName: String {
-        if let cwd, cwd != "/", !cwd.isEmpty {
+        // $HOME is not a project, and a row named after the user's home
+        // folder is a row named after the user. Fall back to the process.
+        if let cwd, cwd != "/", !cwd.isEmpty,
+           Matching.canonicalPath(cwd) != Self.canonicalHome {
             return URL(fileURLWithPath: cwd).lastPathComponent
         }
         return processName

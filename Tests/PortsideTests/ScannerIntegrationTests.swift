@@ -23,7 +23,12 @@ final class ScannerIntegrationTests: XCTestCase {
         let (fd, port) = try bindListener()
         defer { close(fd) }
 
-        let found = (PortScanner().scan() ?? []).first {
+        // Declared managed: the test host is an .xctest bundle, which the
+        // admission policy treats as app-internal, exactly as it treats
+        // Warp's agent. A server Portside launched bypasses that check, and
+        // that is the path this test exercises.
+        let managed = Set([ProcInfo.processGroup(of: getpid())])
+        let found = (PortScanner().scan(managedPgids: managed) ?? []).first {
             $0.pid == getpid() && $0.port == port
         }
         guard let found else {
@@ -121,5 +126,67 @@ final class ScannerIntegrationTests: XCTestCase {
             close(fd)
         }
         throw XCTSkip("no free port in test range")
+    }
+}
+
+// MARK: - Directory exemption from the ephemeral filter
+
+extension ScannerIntegrationTests {
+    /// A listener on an OS-assigned (ephemeral-range) port must still be
+    /// found when its working directory belongs to a saved server — the
+    /// regression here left a two-day-old `next dev` on port 52476 invisible
+    /// while its row claimed to be stopped.
+    func testEphemeralPortListenerRescuedByDirectory() throws {
+        let (fd, port) = try bindEphemeralListener()
+        defer { close(fd) }
+        XCTAssertGreaterThanOrEqual(port, PortScanner.ephemeralFloor,
+                                    "test needs an ephemeral-range port")
+
+        guard let cwd = ProcInfo.workingDirectory(of: getpid()) else {
+            throw XCTSkip("cannot resolve own cwd")
+        }
+        let dir = Matching.canonicalPath(cwd)
+        let scanner = PortScanner()
+
+        // The admission policy is pure, so the rescue is asserted directly —
+        // a live scan can't demonstrate it from inside an .xctest bundle,
+        // which the policy rightly rejects as app-internal.
+        let exe = "/opt/homebrew/bin/node"
+        XCTAssertFalse(PortScanner.shouldInclude(
+            port: port, processName: "node", pgid: 4242,
+            cwd: dir, executable: exe))
+        XCTAssertTrue(PortScanner.shouldInclude(
+            port: port, processName: "node", pgid: 4242,
+            cwd: dir, executable: exe, exemptDirectories: [dir]),
+            "a saved server's directory should rescue an ephemeral port")
+
+        // And the socket really is on an ephemeral port, so the scan without
+        // any exemption genuinely cannot see it.
+        XCTAssertFalse((scanner.scan() ?? []).contains { $0.port == port })
+    }
+
+    private func bindEphemeralListener() throws -> (fd: Int32, port: Int) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw XCTSkip("no socket") }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0   // OS-assigned: lands in the ephemeral range
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(fd, 1) == 0 else {
+            close(fd); throw XCTSkip("bind failed")
+        }
+        var out = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &out) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                _ = getsockname(fd, $0, &len)
+            }
+        }
+        return (fd, Int(UInt16(bigEndian: out.sin_port)))
     }
 }

@@ -132,3 +132,65 @@ final class ScannerParsingTests: XCTestCase {
         ))
     }
 }
+
+// MARK: - App-internal listeners
+
+final class AppInternalTests: XCTestCase {
+    func testKnownPlumbingIsHidden() {
+        // The cases that motivated the rule.
+        XCTAssertTrue(PortScanner.isAppInternal(
+            executable: "/Applications/Warp.app/Contents/MacOS/stable"))
+        XCTAssertTrue(PortScanner.isAppInternal(
+            executable: "/Users/x/Library/Developer/Xcode/DerivedData/A/B/PackageTests.xctest/C"))
+        XCTAssertTrue(PortScanner.deniedByName("xctest"))
+        XCTAssertTrue(PortScanner.isAppInternal(
+            executable: "/Applications/Slack.app/Contents/Frameworks/Slack Helper.app/Contents/MacOS/Slack Helper"))
+        XCTAssertTrue(PortScanner.isAppInternal(
+            executable: "/System/Library/CoreServices/something"))
+        XCTAssertTrue(PortScanner.isAppInternal(executable: "/usr/libexec/some-daemon"))
+    }
+
+    /// Regressions the release audit caught: these are all real dev servers
+    /// that a blanket ".app" or "/Library" rule hid.
+    func testRealServersInsideBundlesAndLibraryAreVisible() {
+        // Every framework-build Python rewrites argv[0] to its Python.app stub.
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"))
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/opt/homebrew/Cellar/python@3.12/3.12.4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"))
+        // .pkg JDKs, as IntelliJ / Gradle / Maven exec them.
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin/java"))
+        // Apps whose purpose is the ports they hold.
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Applications/Docker.app/Contents/MacOS/com.docker.backend"))
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Applications/OrbStack.app/Contents/MacOS/OrbStack Helper"))
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Applications/Postgres.app/Contents/Versions/16/bin/postgres"))
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Library/PostgreSQL/16/bin/postgres"))
+        // Ordinary interpreters and project binaries.
+        XCTAssertFalse(PortScanner.isAppInternal(executable: "/usr/local/bin/node"))
+        XCTAssertFalse(PortScanner.isAppInternal(executable: "/opt/homebrew/bin/node"))
+        XCTAssertFalse(PortScanner.isAppInternal(
+            executable: "/Users/x/.nvm/versions/node/v22.0.0/bin/node"))
+        XCTAssertFalse(PortScanner.isAppInternal(executable: "/Users/x/Code/myapp/server"))
+        XCTAssertFalse(PortScanner.isAppInternal(executable: nil))
+        XCTAssertFalse(PortScanner.isAppInternal(executable: "node"))
+    }
+
+    func testHomeDirectoryIsNotUsedAsAServerName() {
+        let home = NSHomeDirectory()
+        let atHome = DetectedServer(
+            pid: 1, port: 9277, pgid: 1, processName: "stable",
+            commandLine: nil, cwd: home, adoption: nil)
+        XCTAssertEqual(atHome.displayName, "stable",
+                       "a server in $HOME must not be named after the user")
+
+        let inProject = DetectedServer(
+            pid: 2, port: 3000, pgid: 2, processName: "node",
+            commandLine: nil, cwd: home + "/Code/flatland", adoption: nil)
+        XCTAssertEqual(inProject.displayName, "flatland")
+    }
+}

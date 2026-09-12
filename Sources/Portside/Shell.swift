@@ -3,11 +3,14 @@ import Foundation
 /// Run a command synchronously and capture raw stdout. Call off the main
 /// thread. A hung tool (wedged lsof, dead mount) is SIGKILLed at the timeout
 /// so the scan pipeline can never freeze permanently.
+///
+/// Returns nil when the tool could not run or did not finish — callers must
+/// treat that as "unknown", never as "empty output".
 func shellData(
     _ executable: String,
     _ arguments: [String],
     timeout: TimeInterval = 10
-) -> Data {
+) -> Data? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
@@ -20,7 +23,7 @@ func shellData(
     do {
         try process.run()
     } catch {
-        return Data()
+        return nil
     }
 
     let done = DispatchGroup()
@@ -37,8 +40,11 @@ func shellData(
             kill(process.processIdentifier, SIGKILL)
         }
         // Only touch `data` once the reader thread has finished with it.
-        guard done.wait(timeout: .now() + 3) != .timedOut else { return Data() }
+        _ = done.wait(timeout: .now() + 3)
+        return nil
     }
     process.waitUntilExit()
+    // Not gated on exit status: lsof exits 1 when nothing matched, which is a
+    // legitimate "no listeners", not a failure.
     return data
 }

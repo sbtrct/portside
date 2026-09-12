@@ -11,6 +11,11 @@ final class PortScanner {
         var processName: String
         var cwd: String?
         var displayCommand: String?
+        /// argv[0] — what the process actually runs, which is how an app's
+        /// internal helper is told apart from a dev server. Its cwd can't do
+        /// that job: Warp's agent reports $HOME, and an Xcode test bundle
+        /// reports whichever repo the tests were launched from.
+        var executable: String?
         var pgid: pid_t
         var adoption: AdoptionRecipe?
     }
@@ -20,7 +25,17 @@ final class PortScanner {
         "rapportd", "sharingd", "ControlCe", "ControlCenter", "AirPlay",
         "identityservicesd", "assistantd", "Spotify", "Dropbox", "OneDrive",
         "CoreSync", "Creative Cloud", "Adobe", "Figma", "figma_agent",
-        "Raycast", "Cursor Helper", "Code Helper", "JetBrains",
+        "Raycast", "Cursor Helper", "Code Helper", "JetBrains", "xctest",
+    ]
+
+    /// App bundles whose helper processes hold ports for the app's own use
+    /// (Warp's agent, Slack's IPC). Matched against the executable path,
+    /// lower-cased, because these helpers have unhelpful process names
+    /// ("stable"). Kept deliberately short: an app that serves ports ON
+    /// PURPOSE — Docker Desktop, OrbStack, Postgres.app — must never be here.
+    static let helperBundles = [
+        "/warp.app/", "/slack.app/", "/discord.app/", "/zoom.us.app/",
+        "/microsoft teams", "/notion.app/", "/1password",
     ]
 
     /// Ports in the OS ephemeral range are never dev servers. Read from sysctl
@@ -45,20 +60,66 @@ final class PortScanner {
     /// exempt ports bypass only the ephemeral floor.
     static func shouldInclude(
         port: Int, processName: String, pgid: pid_t,
-        exemptPorts: Set<Int>, managedPgids: Set<pid_t>
+        cwd: String? = nil, executable: String? = nil,
+        exemptPorts: Set<Int> = [], exemptDirectories: Set<String> = [],
+        managedPgids: Set<pid_t> = []
     ) -> Bool {
+        // Our own child: admitted whatever it looks like.
         if managedPgids.contains(pgid) { return true }
-        if denylist.contains(where: { processName.hasPrefix($0) }) { return false }
-        return port < ephemeralFloor || exemptPorts.contains(port)
+        if deniedByName(processName) { return false }
+        if isAppInternal(executable: executable) { return false }
+        if port < ephemeralFloor || exemptPorts.contains(port) { return true }
+        // An odd-numbered port is still this server if it is working out of a
+        // saved server's directory — a dev server handed an OS-assigned port
+        // lands in the ephemeral range and would otherwise be invisible.
+        if let cwd, exemptDirectories.contains(Matching.canonicalPath(cwd)) {
+            return true
+        }
+        return false
+    }
+
+    static func deniedByName(_ processName: String) -> Bool {
+        denylist.contains(where: { processName.hasPrefix($0) })
+    }
+
+    /// Listeners that are some app's own plumbing rather than a server the
+    /// user runs: test bundles, Apple's session daemons, and a short list of
+    /// known helper bundles. Deliberately NOT a generic "anything under a
+    /// .app or /Library" rule — that hides real servers:
+    ///
+    /// - Every framework-build Python (Apple's /usr/bin/python3, Homebrew's
+    ///   python@3.x, python.org) rewrites argv[0] to
+    ///   `…/Python.app/Contents/MacOS/Python`, so a `.app/` test hides every
+    ///   Django / Flask / uvicorn dev server on the machine.
+    /// - .pkg JDKs live in /Library/Java/…; IntelliJ, Gradle and Maven exec
+    ///   `java` by that absolute path, so a `/Library/` test hides Spring apps.
+    /// - Docker Desktop, OrbStack and Postgres.app are .app bundles whose
+    ///   whole point is the ports they hold.
+    ///
+    /// Anything Portside launched bypasses this check before it is reached.
+    static func isAppInternal(executable: String?) -> Bool {
+        guard let executable, executable.hasPrefix("/") else { return false }
+        let path = executable.lowercased()
+        if path.contains(".xctest/") { return true }
+        if path.hasPrefix("/system/") || path.hasPrefix("/usr/libexec/") { return true }
+        return helperBundles.contains(where: { path.contains($0) })
     }
 
     /// Returns nil when a previous scan is still running (wedged on a dead
     /// mount, say) — callers skip the tick instead of racing the cache.
-    func scan(exemptPorts: Set<Int> = [], managedPgids: Set<pid_t> = []) -> [DetectedServer]? {
+    func scan(
+        exemptPorts: Set<Int> = [],
+        exemptDirectories: Set<String> = [],
+        managedPgids: Set<pid_t> = []
+    ) -> [DetectedServer]? {
         guard scanLock.try() else { return nil }
         defer { scanLock.unlock() }
 
-        let data = shellData("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn0"])
+        // A failed or timed-out lsof is "unknown", not "nothing is listening":
+        // reporting it as zero listeners would flip every row to stopped and
+        // evict the metadata cache. Skip the tick instead; the next one retries.
+        guard let data = shellData("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn0"])
+        else { return nil }
         let listeners = Self.parseListeners(data)
 
         // Evict metadata for pids that are no longer listening.
@@ -68,14 +129,12 @@ final class PortScanner {
         var seen = Set<String>()
         var result: [DetectedServer] = []
         for listener in listeners {
-            guard Self.shouldInclude(
-                      port: listener.port, processName: listener.name,
-                      pgid: ProcInfo.processGroup(of: listener.pid),
-                      exemptPorts: exemptPorts, managedPgids: managedPgids
-                  ),
-                  seen.insert("\(listener.pid):\(listener.port)").inserted
+            guard seen.insert("\(listener.pid):\(listener.port)").inserted
             else { continue }
 
+            // Metadata before admission: the policy needs argv[0] and the
+            // working directory. Cached per pid, so the syscalls happen once
+            // per process, not once per scan.
             let meta: PidMeta
             if let cached = metaCache[listener.pid] {
                 meta = cached
@@ -83,6 +142,13 @@ final class PortScanner {
                 meta = Self.fetchMeta(pid: listener.pid, fallbackName: listener.name)
                 metaCache[listener.pid] = meta
             }
+
+            guard Self.shouldInclude(
+                port: listener.port, processName: meta.processName,
+                pgid: meta.pgid, cwd: meta.cwd, executable: meta.executable,
+                exemptPorts: exemptPorts, exemptDirectories: exemptDirectories,
+                managedPgids: managedPgids
+            ) else { continue }
 
             result.append(DetectedServer(
                 pid: listener.pid,
@@ -102,10 +168,12 @@ final class PortScanner {
     static func listeningPids(among pids: [pid_t]) -> Set<pid_t> {
         guard !pids.isEmpty else { return [] }
         let list = pids.map(String.init).joined(separator: ",")
-        let data = shellData(
+        // nil = lsof unavailable: report no survivors, so the SIGKILL
+        // escalation that depends on this stands down rather than firing blind.
+        guard let data = shellData(
             "/usr/sbin/lsof",
             ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", list, "-Fp0"]
-        )
+        ) else { return [] }
         return Set(parseListeners(data).map(\.pid)).union(
             Set(parsePidsOnly(data))
         )
@@ -175,6 +243,7 @@ final class PortScanner {
             processName: name,
             cwd: cwd,
             displayCommand: argv?.joined(separator: " "),
+            executable: argv?.first,
             pgid: pgid,
             adoption: adoptionRecipe(cwd: cwd, argv: argv)
         )

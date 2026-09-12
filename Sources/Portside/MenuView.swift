@@ -164,15 +164,18 @@ private struct ServerRow: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text(caption)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            if status.isUp, let bytes = model.memory(for: server) {
-                MemoryBadge(bytes: bytes)
+                HStack(spacing: 8) {
+                    Text(caption)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    if hovered, status.isUp,
+                       let bytes = model.memory(for: server) {
+                        MemoryBadge(bytes: bytes)
+                    }
+                }
             }
             overflowMenu
                 .opacity(hovered ? 1 : 0)
@@ -288,14 +291,16 @@ private struct ProjectRow: View {
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(project.collapsed ? 0 : 90))
                 }
-                Text(caption(aggregate))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            if projectMemory > 0 {
-                MemoryBadge(bytes: projectMemory)
+                HStack(spacing: 8) {
+                    Text(caption(aggregate))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if hovered, projectMemory > 0 {
+                        MemoryBadge(bytes: projectMemory)
+                    }
+                }
             }
             overflowMenu
                 .opacity(hovered ? 1 : 0)
@@ -400,15 +405,17 @@ private struct GhostRow: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
-                Text(server.commandLine ?? "pid \(server.pid)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            if let bytes = model.memoryByGroup[server.pgid] {
-                MemoryBadge(bytes: bytes)
+                HStack(spacing: 8) {
+                    Text(server.commandLine ?? "pid \(server.pid)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    if hovered, let bytes = model.memoryByGroup[server.pgid] {
+                        MemoryBadge(bytes: bytes)
+                    }
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -539,7 +546,7 @@ private struct MemoryBadge: View {
     private var color: AnyShapeStyle {
         if bytes >= MemoryDisplay.alarmBytes { return AnyShapeStyle(.red) }
         if bytes >= MemoryDisplay.warnBytes { return AnyShapeStyle(.orange) }
-        return AnyShapeStyle(.tertiary)
+        return AnyShapeStyle(.secondary)
     }
 }
 

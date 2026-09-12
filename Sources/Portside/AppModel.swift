@@ -11,6 +11,9 @@ final class AppModel: ObservableObject {
     @Published var runs: [UUID: ManagedRun] = [:]
     @Published var lastExit: [UUID: Int32] = [:]
     @Published var memoryByGroup: [pid_t: UInt64] = [:]
+    /// Runs the user asked to stop. Their death by SIGTERM/SIGKILL is the
+    /// requested outcome, so reapRuns must not record it as "exited (143)".
+    private var stoppingRuns: Set<UUID> = []
     @Published var editorDraft: ServerDraft?
     @Published var lastError: String?
 
@@ -179,9 +182,14 @@ final class AppModel: ObservableObject {
         scanStartedAt = Date()
         let scanner = self.scanner
         let exemptPorts = Set(servers.compactMap(\.port))
+        let exemptDirs = Set(servers.map { canonical($0.directory) })
         let managedPgids = Set(runs.values.map(\.pid))
         Task.detached(priority: .utility) {
-            let detected = scanner.scan(exemptPorts: exemptPorts, managedPgids: managedPgids)
+            let detected = scanner.scan(
+                exemptPorts: exemptPorts,
+                exemptDirectories: exemptDirs,
+                managedPgids: managedPgids
+            )
             // Piggyback memory sampling on the scan, off the main thread:
             // one group walk per visible server tree, every scan cycle.
             var memory: [pid_t: UInt64] = [:]
@@ -231,9 +239,11 @@ final class AppModel: ObservableObject {
             let result = waitpid(run.pid, &status, WNOHANG)
             if result == run.pid {
                 runs[id] = nil
-                lastExit[id] = Self.decodeExitStatus(status)
+                lastExit[id] = stoppingRuns.remove(id) == nil
+                    ? Self.decodeExitStatus(status) : nil
             } else if result == -1 && errno == ECHILD {
                 runs[id] = nil
+                stoppingRuns.remove(id)
             }
         }
     }
@@ -308,6 +318,7 @@ final class AppModel: ObservableObject {
         reapRuns()
         if let run = runs[server.id],
            kill(run.pid, 0) == 0 || allServers.contains(where: { $0.pgid == run.pid }) {
+            stoppingRuns.insert(server.id)
             Launcher.terminateGroup(run.pid)
             escalateGroup(run.pid)
         } else if status(of: server).isUp {
