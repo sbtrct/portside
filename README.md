@@ -152,8 +152,7 @@ Servers are stored in `~/Library/Application Support/Portside/servers.json`.
 ## Metadata
 
 Made by [Thomas Drach](https://github.com/tdrach) at
-[Subtract](https://subtract.design). Builds are signed with Thomas's
-Apple Developer ID, so macOS will show his name. 
+[Subtract](https://subtract.design). Builds are signed with my name. 
 
 ## Ideas for later
 
