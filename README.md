@@ -2,6 +2,8 @@
 
 Manage your local servers in the menu bar. 
 
+<img width="2295" height="1533" alt="portside-hero-no-borders" src="https://github.com/user-attachments/assets/cfff75fd-190b-4214-8e1d-da257727d1e7" />
+
 Portside is a free macOS menu bar app for managing local dev servers. See everything listening on localhost: stop it, start it, open it in the browser, and more. 
 
 Everything stays on your machine. Portside makes zero external calls. No server calls, no tracking.
